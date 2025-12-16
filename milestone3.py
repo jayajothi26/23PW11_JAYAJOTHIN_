@@ -50,11 +50,18 @@ def move_cost(p1, a1, p2, a2, vmax, amax, wmax, alphamax, sym):
         angular_time(ang_diff(a1, a2, sym), wmax, alphamax)
     )
 
-# ---------------- GREEDY NN ---------------- #
+# ---------------- CHECK IF DIE IS WITHIN WAFER ---------------- #
+def is_within_wafer(center_pos, wafer_diameter):
+    """Check if die center is within wafer diameter bounds"""
+    radius = wafer_diameter / 2.0
+    cx, cy = center_pos
+    distance_from_center = math.hypot(cx, cy)  # Distance from wafer center (0,0)
+    return distance_from_center <= radius
+
+# ---------------- GREEDY NN - FILTER OUT OF WAFER ---------------- #
 
 def greedy_nn(start_pos, start_ang, dies,
-              vmax, amax, wmax, alphamax, sym):
-
+              vmax, amax, wmax, alphamax, sym, wafer_diameter):
     used = [False]*len(dies)
     pos, ang = start_pos, start_ang
     path = [(pos, ang)]
@@ -65,18 +72,25 @@ def greedy_nn(start_pos, start_ang, dies,
         for i, (p, base) in enumerate(dies):
             if used[i]:
                 continue
+            
+            # SKIP DIES OUTSIDE WAFER DIAMETER - CRITICAL FIX
+            if not is_within_wafer(p, wafer_diameter):
+                continue
 
             angles = [(base + k*90) % 360] if not sym else \
                      [(base + k*90) % 360 for k in range(4)]
 
             for a in angles:
                 cost = move_cost(pos, ang, p, a,
-                                 vmax, amax, wmax, alphamax, sym)
+                               vmax, amax, wmax, alphamax, sym)
                 if cost < best_cost:
                     best_cost = cost
                     best_i = i
                     best_ang = a
 
+        if best_i == -1:  # No valid dies left within wafer
+            break
+            
         used[best_i] = True
         pos, _ = dies[best_i]
         ang = best_ang
@@ -116,7 +130,6 @@ def two_opt(path, vmax, amax, wmax, alphamax, sym):
 
 def optimize_angles(path, angle_map, sym):
     res = [path[0]]
-    print(res)
     for i in range(1, len(path)):
         pos = path[i][0]
         base = angle_map[pos]
@@ -134,6 +147,7 @@ def optimize_angles(path, angle_map, sym):
 
 def milestone3(data):
     sym = data.get("UseSymmetry90", True)
+    wafer_diameter = data.get("WaferDiameter", 300.0)  # Default 300mm wafer
 
     vmax = data["StageVelocity"]
     amax = data["StageAcceleration"]
@@ -152,15 +166,16 @@ def milestone3(data):
         dies.append((c, a))
         angle_map[c] = a
 
-    path = greedy_nn(start_pos, start_ang, dies,
-                     vmax, amax, wmax, alphamax, sym)
+    # Pass wafer_diameter to greedy_nn
+    path = greedy_nn(start_pos, start_ang, dies, vmax, amax, wmax, alphamax, 
+                     sym, wafer_diameter)
 
     path = two_opt(path, vmax, amax, wmax, alphamax, sym)
     path = optimize_angles(path, angle_map, sym)
 
     return {
         "TotalTime": round(total_time(path, vmax, amax, wmax, alphamax, sym), 6),
-        "Path": [p for p, _ in path]
+        "Path": [list(p) for p, _ in path]
     }
 
 # ---------------- MAIN ---------------- #
@@ -170,7 +185,9 @@ if __name__ == "__main__":
         data = json.load(f)
 
     result = milestone3(data)
-    #print(result)
-
+    
+    print(f"Path length: {len(result['Path'])}")
+    print(f"Wafer diameter used: {data.get('WaferDiameter', 300.0)}mm")
+    
     with open("TestCase_3_4.json", "w") as f:
         json.dump(result, f, indent=2)
