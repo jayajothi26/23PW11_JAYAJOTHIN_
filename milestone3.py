@@ -1,8 +1,7 @@
 import json
 import math
-
-# ---------------- BASIC GEOMETRY ---------------- #
-
+import sys
+import matplotlib.pyplot as plt
 def dist(p1, p2):
     return math.hypot(p2[0]-p1[0], p2[1]-p1[1])
 
@@ -17,7 +16,6 @@ def base_angle(corners):
     dy = corners[1][1] - corners[0][1]
     return math.degrees(math.atan2(dy, dx)) % 360
 
-# ---------------- ANGLE DIFF ---------------- #
 
 def ang_diff(a, b, sym):
     if sym:
@@ -26,7 +24,6 @@ def ang_diff(a, b, sym):
     d = abs((a - b) % 360)
     return min(d, 360 - d)
 
-# ---------------- MOTION TIME ---------------- #
 
 def linear_time(d, vmax, amax):
     if d <= 0:
@@ -50,15 +47,11 @@ def move_cost(p1, a1, p2, a2, vmax, amax, wmax, alphamax, sym):
         angular_time(ang_diff(a1, a2, sym), wmax, alphamax)
     )
 
-# ---------------- CHECK IF DIE IS WITHIN WAFER ---------------- #
 def is_within_wafer(center_pos, wafer_diameter):
-    """Check if die center is within wafer diameter bounds"""
     radius = wafer_diameter / 2.0
     cx, cy = center_pos
-    distance_from_center = math.hypot(cx, cy)  # Distance from wafer center (0,0)
+    distance_from_center = math.hypot(cx, cy)  
     return distance_from_center <= radius
-
-# ---------------- GREEDY NN - FILTER OUT OF WAFER ---------------- #
 
 def greedy_nn(start_pos, start_ang, dies,
               vmax, amax, wmax, alphamax, sym, wafer_diameter):
@@ -73,7 +66,6 @@ def greedy_nn(start_pos, start_ang, dies,
             if used[i]:
                 continue
             
-            # SKIP DIES OUTSIDE WAFER DIAMETER - CRITICAL FIX
             if not is_within_wafer(p, wafer_diameter):
                 continue
 
@@ -88,7 +80,7 @@ def greedy_nn(start_pos, start_ang, dies,
                     best_i = i
                     best_ang = a
 
-        if best_i == -1:  # No valid dies left within wafer
+        if best_i == -1:  
             break
             
         used[best_i] = True
@@ -98,8 +90,6 @@ def greedy_nn(start_pos, start_ang, dies,
 
     return path
 
-# ---------------- TOTAL TIME ---------------- #
-
 def total_time(path, vmax, amax, wmax, alphamax, sym):
     return sum(
         move_cost(path[i][0], path[i][1],
@@ -107,8 +97,6 @@ def total_time(path, vmax, amax, wmax, alphamax, sym):
                   vmax, amax, wmax, alphamax, sym)
         for i in range(len(path)-1)
     )
-
-# ---------------- 2-OPT ---------------- #
 
 def two_opt(path, vmax, amax, wmax, alphamax, sym):
     best = path
@@ -126,8 +114,6 @@ def two_opt(path, vmax, amax, wmax, alphamax, sym):
                     improved = True
     return best
 
-# ---------------- ANGLE POLISH ---------------- #
-
 def optimize_angles(path, angle_map, sym):
     res = [path[0]]
     for i in range(1, len(path)):
@@ -135,19 +121,17 @@ def optimize_angles(path, angle_map, sym):
         base = angle_map[pos]
         prev = res[-1][1]
 
-        angles = [(base + k*90) % 360] if not sym else \
-                 [(base + k*90) % 360 for k in range(4)]
+        angles = [(base + k*90) % 360] if not sym else [(base + k*90) % 360 for k in range(4)]
 
         best_ang = min(angles, key=lambda a: ang_diff(prev, a, sym))
         res.append((pos, best_ang))
 
     return res
 
-# ---------------- MILESTONE 3 ---------------- #
 
 def milestone3(data):
     sym = data.get("UseSymmetry90", True)
-    wafer_diameter = data.get("WaferDiameter", 300.0)  # Default 300mm wafer
+    wafer_diameter = data.get("WaferDiameter") 
 
     vmax = data["StageVelocity"]
     amax = data["StageAcceleration"]
@@ -166,7 +150,6 @@ def milestone3(data):
         dies.append((c, a))
         angle_map[c] = a
 
-    # Pass wafer_diameter to greedy_nn
     path = greedy_nn(start_pos, start_ang, dies, vmax, amax, wmax, alphamax, 
                      sym, wafer_diameter)
 
@@ -178,16 +161,57 @@ def milestone3(data):
         "Path": [list(p) for p, _ in path]
     }
 
-# ---------------- MAIN ---------------- #
 
 if __name__ == "__main__":
-    with open("Input_Milestone3_Testcase4.json") as f:
-        data = json.load(f)
+    if len(sys.argv) < 3:
+        print("Usage: python  <milestone_number> <testcase_number>")
+        sys.exit(1)
 
+    milestone = sys.argv[1]
+    testcase = sys.argv[2]
+    input_file = f"C:\\Users\\kla_user\\Downloads\\KLA HACKATHON\\KLA HACKATHON\\Input_Milestone{milestone}_Testcase{testcase}.json"
+    output_file = f"TestCase_{milestone}_{testcase}.json"
+
+    with open(input_file) as f:
+        data = json.load(f)
     result = milestone3(data)
-    
+
     print(f"Path length: {len(result['Path'])}")
-    print(f"Wafer diameter used: {data.get('WaferDiameter', 300.0)}mm")
-    
-    with open("TestCase_3_4.json", "w") as f:
+    print(f"Wafer diameter used: {data.get('WaferDiameter')}mm")
+    all_corners=[]
+    for die in data['Dies']:
+        for corner in die['Corners']:
+            all_corners.append(corner)
+    x_coords = [point[0] for point in all_corners]
+    y_coords = [point[1] for point in all_corners]
+
+    plt.figure(figsize=(10, 10))
+    plt.scatter(x_coords, y_coords, color='blue', s=10, label='Corners')
+
+    for die in data['Dies']:
+        corners = die['Corners']
+        x_die = [c[0] for c in corners] + [corners[0][0]]
+        y_die = [c[1] for c in corners] + [corners[0][1]]
+        plt.plot(x_die, y_die, color='red', linewidth=1)
+    plt.scatter(data['InitialPosition'][0], data['InitialPosition'][1],color='green', s=100, marker='x', label='Initial Position')
+    if result["Path"]:
+        path_x = [p[0] for p in result["Path"]]
+        path_y = [p[1] for p in result["Path"]]
+        plt.plot(path_x, path_y, color='purple', linewidth=2, marker='o', markersize=5, label='Optimized Path')
+        for i, (x, y) in enumerate(zip(path_x, path_y), start=1):
+            plt.text(x, y, str(i), fontsize=10, color='black', ha='right', va='bottom')
+    plt.xlabel('X Coordinate')
+    plt.ylabel('Y Coordinate')
+    plt.title('Plot of Die Corners with Optimized Path (Initial Included)')
+    plt.legend()
+    plt.axis('equal')
+    plt.grid(True)
+    plt.show()
+
+   
+
+    with open(output_file, "w") as f:
         json.dump(result, f, indent=2)
+
+
+
