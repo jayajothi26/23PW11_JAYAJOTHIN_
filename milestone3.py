@@ -1,75 +1,176 @@
 import json
 import math
 
-def distance(p1, p2):
-    return math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+# ---------------- BASIC GEOMETRY ---------------- #
 
-def die_center(corners):
-    x = sum(c[0] for c in corners) / 4
-    y = sum(c[1] for c in corners) / 4
-    return [x, y]
+def dist(p1, p2):
+    return math.hypot(p2[0]-p1[0], p2[1]-p1[1])
 
-def die_angle(corners):
-    x1, y1 = corners[0]
-    x2, y2 = corners[1]
-    dx = x2 - x1
-    dy = y2 - y1
-    return math.degrees(math.atan2(dy, dx))
+def center(corners):
+    return (
+        sum(p[0] for p in corners) / 4,
+        sum(p[1] for p in corners) / 4
+    )
 
-def angular_diff(a1, a2):
-    diff = (a1 - a2) % 90
-    return min(diff, 90 - diff)
+def base_angle(corners):
+    dx = corners[1][0] - corners[0][0]
+    dy = corners[1][1] - corners[0][1]
+    return math.degrees(math.atan2(dy, dx)) % 360
 
-def trap_time(dist, vmax, amax):
-    if dist <= 0:
+# ---------------- ANGLE DIFF ---------------- #
+
+def ang_diff(a, b, sym):
+    if sym:
+        d = abs((a - b) % 90)
+        return min(d, 90 - d)
+    d = abs((a - b) % 360)
+    return min(d, 360 - d)
+
+# ---------------- MOTION TIME ---------------- #
+
+def linear_time(d, vmax, amax):
+    if d <= 0:
         return 0.0
-    if amax <= 0:
-        raise ValueError("Acceleration must be positive")
-    trap_dist = vmax ** 2 / (2*amax)
-    if dist <= trap_dist:
-        return math.sqrt(4 * dist / amax)
-    else:
-        t_accel = vmax / amax
-        cruise_dist = dist - trap_dist
-        t_cruise = cruise_dist / vmax
-        return 2 * t_accel + t_cruise
+    d_switch = (vmax * vmax) / amax
+    if d >= d_switch:
+        return (2 * vmax / amax) + (d - d_switch) / vmax
+    return 2 * math.sqrt(d / amax)
+
+def angular_time(a, wmax, amax):
+    if a <= 0:
+        return 0.0
+    a_switch = (wmax * wmax) / amax
+    if a >= a_switch:
+        return (2 * wmax / amax) + (a - a_switch) / wmax
+    return 2 * math.sqrt(a / amax)
+
+def move_cost(p1, a1, p2, a2, vmax, amax, wmax, alphamax, sym):
+    return max(
+        linear_time(dist(p1, p2), vmax, amax),
+        angular_time(ang_diff(a1, a2, sym), wmax, alphamax)
+    )
+
+# ---------------- GREEDY NN ---------------- #
+
+def greedy_nn(start_pos, start_ang, dies,
+              vmax, amax, wmax, alphamax, sym):
+
+    used = [False]*len(dies)
+    pos, ang = start_pos, start_ang
+    path = [(pos, ang)]
+
+    for _ in range(len(dies)):
+        best_i, best_ang, best_cost = -1, 0, float("inf")
+
+        for i, (p, base) in enumerate(dies):
+            if used[i]:
+                continue
+
+            angles = [(base + k*90) % 360] if not sym else \
+                     [(base + k*90) % 360 for k in range(4)]
+
+            for a in angles:
+                cost = move_cost(pos, ang, p, a,
+                                 vmax, amax, wmax, alphamax, sym)
+                if cost < best_cost:
+                    best_cost = cost
+                    best_i = i
+                    best_ang = a
+
+        used[best_i] = True
+        pos, _ = dies[best_i]
+        ang = best_ang
+        path.append((pos, ang))
+
+    return path
+
+# ---------------- TOTAL TIME ---------------- #
+
+def total_time(path, vmax, amax, wmax, alphamax, sym):
+    return sum(
+        move_cost(path[i][0], path[i][1],
+                  path[i+1][0], path[i+1][1],
+                  vmax, amax, wmax, alphamax, sym)
+        for i in range(len(path)-1)
+    )
+
+# ---------------- 2-OPT ---------------- #
+
+def two_opt(path, vmax, amax, wmax, alphamax, sym):
+    best = path
+    best_t = total_time(best, vmax, amax, wmax, alphamax, sym)
+
+    improved = True
+    while improved:
+        improved = False
+        for i in range(1, len(best)-2):
+            for j in range(i+1, len(best)-1):
+                cand = best[:i] + best[i:j][::-1] + best[j:]
+                t = total_time(cand, vmax, amax, wmax, alphamax, sym)
+                if t < best_t:
+                    best, best_t = cand, t
+                    improved = True
+    return best
+
+# ---------------- ANGLE POLISH ---------------- #
+
+def optimize_angles(path, angle_map, sym):
+    res = [path[0]]
+    print(res)
+    for i in range(1, len(path)):
+        pos = path[i][0]
+        base = angle_map[pos]
+        prev = res[-1][1]
+
+        angles = [(base + k*90) % 360] if not sym else \
+                 [(base + k*90) % 360 for k in range(4)]
+
+        best_ang = min(angles, key=lambda a: ang_diff(prev, a, sym))
+        res.append((pos, best_ang))
+
+    return res
+
+# ---------------- MILESTONE 3 ---------------- #
 
 def milestone3(data):
+    sym = data.get("UseSymmetry90", True)
+
     vmax = data["StageVelocity"]
     amax = data["StageAcceleration"]
-    cam_vmax = data["CameraVelocity"]
-    cam_amax = data["CameraAcceleration"]
-    curr_pos = data["InitialPosition"]
-    curr_angle = data["InitialAngle"]
-    total_time = 0.0
-    print(curr_pos)
-    path = [curr_pos]
-    
-    for die in data["Dies"]:
-        center = die_center(die["Corners"])
-        dist = distance(curr_pos, center)
-        stage_time = trap_time(dist, vmax, amax)
-        
-        target_angle = die_angle(die["Corners"])
-        angle_delta = angular_diff(curr_angle, target_angle)
-        cam_time = trap_time(angle_delta, cam_vmax, cam_amax)
-        
-        step_time = max(stage_time, cam_time)
-        total_time += step_time
-        
-        curr_pos = center[:]
-        curr_angle = target_angle
-        path.append(center[:])
-    
+    wmax = data["CameraVelocity"]
+    alphamax = data["CameraAcceleration"]
+
+    start_pos = tuple(data["InitialPosition"])
+    start_ang = data["InitialAngle"]
+
+    dies = []
+    angle_map = {}
+
+    for d in data["Dies"]:
+        c = center(d["Corners"])
+        a = base_angle(d["Corners"])
+        dies.append((c, a))
+        angle_map[c] = a
+
+    path = greedy_nn(start_pos, start_ang, dies,
+                     vmax, amax, wmax, alphamax, sym)
+
+    path = two_opt(path, vmax, amax, wmax, alphamax, sym)
+    path = optimize_angles(path, angle_map, sym)
+
     return {
-        "TotalTime": round(total_time, 15),
-        "Path": path
+        "TotalTime": round(total_time(path, vmax, amax, wmax, alphamax, sym), 6),
+        "Path": [p for p, _ in path]
     }
 
-with open(r"D:\KLA HACKATHON\Input_Milestone3_Testcase1.json") as f: 
-    data = json.load(f)
+# ---------------- MAIN ---------------- #
 
-result = milestone3(data)
-print(result)
-with open("TestCase_3_1.json", "w") as f:
-    json.dump(result, f, indent=2)
+if __name__ == "__main__":
+    with open("Input_Milestone3_Testcase4.json") as f:
+        data = json.load(f)
+
+    result = milestone3(data)
+    #print(result)
+
+    with open("TestCase_3_4.json", "w") as f:
+        json.dump(result, f, indent=2)
